@@ -11,6 +11,7 @@ members = [
     # ═══════════════════════════════════════════════════════════════════════════
     "crates/prism-core",
     "crates/prism-gpu",
+    "crates/prism-io",      # Revolutionary I/O with holographic format & async streaming
     "crates/prism-geometry",
     "crates/prism-fluxnet",
     "crates/prism-phases",

@@ -38,6 +38,9 @@ pub mod runtime_config;
 pub mod traits;
 pub mod types;
 
+// PRISM-Zero Flight Recorder
+pub mod telemetry;
+
 // Re-export commonly used items
 pub use errors::PrismError;
 pub use runtime_config::{KernelTelemetry, RuntimeConfig};
