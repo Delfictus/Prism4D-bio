@@ -9,5 +9,5 @@ path = "src/main.rs"
 
 [dependencies]
 prism-gpu = { path = "../prism-gpu" }
-cudarc = { version = "0.15", features = ["driver"] }
+cudarc = { workspace = true }
 anyhow = "1.0"

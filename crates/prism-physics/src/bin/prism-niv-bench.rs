@@ -18,13 +18,12 @@ use prism_physics::molecular_dynamics::{
     MolecularDynamicsConfig, MolecularDynamicsEngine,
 };
 use prism_core::PrismError;
-use prism_io::{AsyncPinnedStreamer, PrismIoError};
-use prism_gpu::memory::{VramGuard, init_global_vram_guard};
-use std::sync::Arc;
+use prism_io::AsyncPinnedStreamer;
+use prism_gpu::memory::init_global_vram_guard;
 use std::time::Instant;
 
 #[cfg(feature = "cuda")]
-use cudarc::driver::CudaDevice;
+use cudarc::driver::CudaContext;
 
 /// Path to the sovereign 2VWD.ptb data file
 const NIV_PTB_PATH: &str = "data/processed/2VWD.ptb";
@@ -44,14 +43,14 @@ async fn main() -> Result<(), PrismError> {
     {
         log::info!("🔌 Initializing CUDA Driver...");
 
-        // 1. Initialize the Driver & Device properly
+        // 1. Initialize the Driver & Context properly
         // This handles cuInit(0) AND context creation automatically.
-        let dev = cudarc::driver::CudaDevice::new(0)
-            .map_err(|e| PrismError::Internal(format!("Failed to init CUDA device: {:?}", e)))?;
+        let dev = cudarc::driver::CudaContext::new(0)
+            .map_err(|e| PrismError::Internal(format!("Failed to init CUDA context: {:?}", e)))?;
 
-        // 2. Extract the Context (Real, not zeroed)
-        // We clone the Arc<CudaContext> from the device
-        let cuda_context = dev.context().clone();
+        // 2. Use the Context directly (Real, not zeroed)
+        // The CudaContext::new(0) already returns an Arc<CudaContext>
+        let cuda_context = dev;
 
         // 3. Initialize the Guard
         init_global_vram_guard(cuda_context);
@@ -87,10 +86,12 @@ async fn main() -> Result<(), PrismError> {
     log::info!("📂 Streaming Sovereign Data via io_uring...");
 
     // Initialize async pinned streamer with GPU integration
-    let streamer = AsyncPinnedStreamer::new().await?;
+    let streamer = AsyncPinnedStreamer::new().await
+        .map_err(|e| PrismError::Internal(format!("Failed to initialize streamer: {:?}", e)))?;
 
     // Load verified structure using sovereign data pipeline
-    let sovereign_buffer = streamer.load_verified_structure(NIV_PTB_PATH).await?;
+    let sovereign_buffer = streamer.load_verified_structure(NIV_PTB_PATH).await
+        .map_err(|e| PrismError::Internal(format!("Failed to load structure: {:?}", e)))?;
 
     log::info!("✅ Data Streamed: {} bytes (Pinned Memory)", sovereign_buffer.len());
 

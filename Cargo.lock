@@ -1233,15 +1233,6 @@ dependencies = [
 
 [[package]]
 name = "cudarc"
-version = "0.15.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acac4b1a5670b4e1223a2dbc7936fb6f614930b6bf427524576ebd73aa166c6d"
-dependencies = [
- "libloading 0.8.9",
-]
-
-[[package]]
-name = "cudarc"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3aa12038120eb13347a6ae2ffab1d34efe78150125108627fd85044dd4d6ff1e"
@@ -3519,7 +3510,7 @@ dependencies = [
  "arrow",
  "crossbeam-queue",
  "crossterm 0.27.0",
- "cudarc 0.18.2",
+ "cudarc",
  "log",
  "ratatui 0.26.3",
  "serde",
@@ -3533,7 +3524,7 @@ name = "prism-escape-extract"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cudarc 0.15.2",
+ "cudarc",
  "prism-gpu",
 ]
 
@@ -3562,7 +3553,7 @@ name = "prism-geometry"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "cudarc 0.18.2",
+ "cudarc",
  "env_logger 0.10.2",
  "log",
  "nvml-wrapper 0.9.0",
@@ -3583,7 +3574,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "criterion",
- "cudarc 0.18.2",
+ "cudarc",
  "dashmap",
  "log",
  "nalgebra 0.32.6",
@@ -3612,7 +3603,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "crossbeam-utils",
- "cudarc 0.18.2",
+ "cudarc",
  "env_logger 0.10.2",
  "hex",
  "log",
@@ -3641,7 +3632,7 @@ dependencies = [
  "bytemuck",
  "criterion",
  "cuda-driver-sys",
- "cudarc 0.18.2",
+ "cudarc",
  "flate2",
  "futures",
  "hex",
@@ -3676,7 +3667,7 @@ dependencies = [
  "colored",
  "criterion",
  "crossbeam-channel",
- "cudarc 0.18.2",
+ "cudarc",
  "env_logger 0.10.2",
  "indexmap",
  "indicatif",
@@ -3719,7 +3710,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "criterion",
- "cudarc 0.18.2",
+ "cudarc",
  "dashmap",
  "log",
  "nalgebra 0.32.6",
@@ -3747,7 +3738,7 @@ dependencies = [
  "chrono",
  "clap",
  "crossbeam-channel",
- "cudarc 0.18.2",
+ "cudarc",
  "env_logger 0.10.2",
  "fastrand",
  "hex",
@@ -3774,7 +3765,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "criterion",
- "cudarc 0.18.2",
+ "cudarc",
  "log",
  "nalgebra 0.32.6",
  "ndarray 0.15.6",
@@ -3794,7 +3785,7 @@ name = "prism-phases"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "cudarc 0.18.2",
+ "cudarc",
  "env_logger 0.10.2",
  "log",
  "parking_lot",
@@ -3818,7 +3809,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "criterion",
- "cudarc 0.18.2",
+ "cudarc",
  "env_logger 0.11.8",
  "log",
  "nalgebra 0.32.6",
@@ -3890,7 +3881,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "csv",
- "cudarc 0.18.2",
+ "cudarc",
  "env_logger 0.11.8",
  "log",
  "prism-core",
@@ -3907,7 +3898,7 @@ name = "prism-whcr"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "cudarc 0.18.2",
+ "cudarc",
  "log",
  "prism-core",
  "prism-gpu",

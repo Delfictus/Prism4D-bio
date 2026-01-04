@@ -40,7 +40,7 @@ log = { workspace = true }
 env_logger = "0.11"
 
 # GPU
-cudarc = { workspace = true, optional = true }
+cudarc = { workspace = true, optional = true, features = ["std", "cuda-12050", "driver"] }
 
 [[bin]]
 name = "prism-niv-bench"
