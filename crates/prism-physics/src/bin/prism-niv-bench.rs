@@ -18,10 +18,13 @@ use prism_physics::molecular_dynamics::{
     MolecularDynamicsConfig, MolecularDynamicsEngine,
 };
 use prism_core::PrismError;
-use prism_io::AsyncPinnedStreamer;
+use prism_io::{AsyncPinnedStreamer, PrismIoError};
 use prism_gpu::memory::{VramGuard, init_global_vram_guard};
 use std::sync::Arc;
 use std::time::Instant;
+
+#[cfg(feature = "cuda")]
+use cudarc::driver::CudaDevice;
 
 /// Path to the sovereign 2VWD.ptb data file
 const NIV_PTB_PATH: &str = "data/processed/2VWD.ptb";
@@ -31,7 +34,7 @@ const BREATHING_STEPS: u64 = 10_000;
 
 /// Main execution entry point for Phase 3.1 - Sovereign Standard Compliance
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), PrismError> {
     // 1. Init Telemetry/Logging
     env_logger::init();
     log::info!("🧬 PRISM NiV Bench - Phase 3.1 Execution");
@@ -39,29 +42,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. GATE 1 CHECK: VRAM Guard - MANDATORY VERIFICATION
     #[cfg(feature = "cuda")]
     {
-        // Initialize CUDA context (placeholder - real implementation needs proper context)
-        let cuda_context = Arc::new(unsafe {
-            // This would be proper CUDA context initialization
-            std::mem::zeroed::<cudarc::driver::CudaContext>()
-        });
+        log::info!("🔌 Initializing CUDA Driver...");
 
+        // 1. Initialize the Driver & Device properly
+        // This handles cuInit(0) AND context creation automatically.
+        let dev = cudarc::driver::CudaDevice::new(0)
+            .map_err(|e| PrismError::Internal(format!("Failed to init CUDA device: {:?}", e)))?;
+
+        // 2. Extract the Context (Real, not zeroed)
+        // We clone the Arc<CudaContext> from the device
+        let cuda_context = dev.context().clone();
+
+        // 3. Initialize the Guard
         init_global_vram_guard(cuda_context);
 
-        // Query GPU memory state with real hardware calls
+        // 4. Query VRAM
         let vram_guard = prism_gpu::memory::global_vram_guard();
-        let vram_info = vram_guard.query_vram()?;
+
+        // This will now succeed because the context is real
+        let vram_info = vram_guard.query_vram()
+            .map_err(|e| PrismError::Internal(format!("VRAM Query Failed: {:?}", e)))?;
 
         log::info!("🛡️ VRAM Check: {} MB Free / {} MB Total",
-            vram_info.free_mb(),
-            vram_info.total_mb()
+            vram_info.free_bytes / 1024 / 1024,
+            vram_info.total_bytes / 1024 / 1024
         );
 
-        // This MUST panic/exit if we are unsafe
+        // 5. Verify Safety
         let physics_memory_required = 1024 * 1024 * 1024; // 1GB
         let workspace_memory_required = 512 * 1024 * 1024; // 512MB
-        vram_guard.verify_physics_engine_startup(physics_memory_required, workspace_memory_required)?;
 
-        log::info!("✅ VRAM Guard: Memory allocation approved for physics engine");
+        vram_guard.verify_physics_engine_startup(physics_memory_required, workspace_memory_required)
+            .map_err(|e| PrismError::Internal(format!("VRAM Safety Check Failed: {:?}", e)))?;
+
+        log::info!("✅ VRAM Guard: Memory allocation approved");
     }
 
     #[cfg(not(feature = "cuda"))]
