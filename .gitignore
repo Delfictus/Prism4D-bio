@@ -1,9 +1,48 @@
-# Large binary dependencies
-crates/prism-niv-bench/tools/libtorch.zip
-crates/prism-niv-bench/tools/libtorch/
+# Build artifacts
+target/
 *.so
 *.so.*
 *.a
-target/
+*.o
+*.ptx
+
+# Dependencies
+crates/prism-niv-bench/tools/libtorch.zip
+crates/prism-niv-bench/tools/libtorch/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment and secrets
 .env
-/data/
+.env.local
+
+# Training outputs (regenerated)
+training_output/
+training_output_neuro/
+training_results/
+
+# Temporary files
+*.tmp
+*.log
+gpu_log.csv
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data directory (large files)
+/data/structures/
+/data/outputs/
+
+# Keep manifest templates
+!/data/manifests/*.json

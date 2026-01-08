@@ -27,6 +27,7 @@ members = [
     "crates/prism-ve",  # Viral Evolution: Unified Escape + Fitness + Cycle
     "crates/prism-ve-bench",  # VASIL Benchmark: GPU + FluxNet RL
     "crates/prism-niv-bench",  # NiV-Bench: Neuromorphic Cryptic Epitope Prediction
+    "crates/prism-learning",  # PRISM-Zero v3.1: Self-calibrating RL engine with swappable datasets
     "crates/prism-gnn",
     "crates/prism-lbs",
     "crates/prism-escape-extract",  # Real feature extraction for viral escape benchmark

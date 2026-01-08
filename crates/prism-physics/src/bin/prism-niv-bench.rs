@@ -21,11 +21,12 @@ use prism_core::PrismError;
 use prism_io::{AsyncPinnedStreamer, HolographicBinaryFormat};
 use prism_gpu::memory::init_global_vram_guard;
 use std::time::Instant;
+use std::sync::Arc;
 
 #[cfg(feature = "cuda")]
 use cudarc::driver::CudaContext;
 
-/// Path to the sovereign 2VWD.ptb data file
+/// Path to the sovereign  6VXX.ptb data file
 const NIV_PTB_PATH: &str = "data/processed/2VWD.ptb";
 
 /// Target simulation steps for deep cryptic epitope analysis (100x boost)
@@ -45,7 +46,7 @@ async fn main() -> Result<(), PrismError> {
 
         // 1. Initialize the Driver & Context properly
         // This handles cuInit(0) AND context creation automatically.
-        let dev = cudarc::driver::CudaContext::new(0)
+        let dev = CudaContext::new(0)
             .map_err(|e| PrismError::Internal(format!("Failed to init CUDA context: {:?}", e)))?;
 
         // 2. Use the Context directly (Real, not zeroed)
@@ -111,9 +112,8 @@ async fn main() -> Result<(), PrismError> {
     // Set CUDA context for GPU operations
     #[cfg(feature = "cuda")]
     {
-        // TODO: Enable when GPU kernels are actually implemented
-        // md_engine.set_cuda_context(dev);
-        log::info!("🔧 GPU kernels not yet implemented, skipping CUDA context setup");
+        md_engine.set_cuda_context(dev);
+        log::info!("🔧 CUDA context configured for real GPU acceleration");
     }
 
     log::info!("🚀 Molecular dynamics engine initialized");
@@ -188,23 +188,9 @@ fn configure_niv_simulation() -> MolecularDynamicsConfig {
     MolecularDynamicsConfig {
         // Scientific parameters for NiV G glycoprotein
         max_steps: BREATHING_STEPS,
-        temperature: 310.15,  // Physiological temperature (37°C)
+        temperature: 1.5,  // Physiological temperature (37°C)
         dt: 1.0,              // 1 femtosecond timestep for accuracy
-
-        // PIMC configuration (quantum effects)
-        pimc_config: prism_physics::molecular_dynamics::PimcConfig {
-            num_beads: 16,           // Reduced for faster convergence
-            step_size: 0.05,         // Smaller steps for viral protein
-            target_acceptance: 0.65, // Target 65% acceptance
-            adaptation_rate: 0.03,   // Conservative adaptation
-        },
-
-        // NLNM configuration (breathing motion)
-        nlnm_config: prism_physics::molecular_dynamics::NlnmConfig {
-            gradient_threshold: 0.0005,  // Tight convergence for breathing modes
-            max_iterations: 15_000,       // Allow longer convergence
-            damping_factor: 0.15,         // Moderate damping for stability
-        },
+        friction: 0.1,        // Standard solvent friction
 
         // GPU memory allocation (conservative for stability)
         use_gpu: true,

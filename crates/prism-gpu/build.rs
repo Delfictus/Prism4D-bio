@@ -158,6 +158,14 @@ fn main() {
         &target_ptx_dir.join("dendritic_whcr.ptx"),
     );
 
+    // Compile Dendritic SNN Reservoir kernel (Neuromorphic RL agent)
+    compile_kernel(
+        &nvcc,
+        "src/kernels/dendritic_snn_reservoir.cu",
+        &ptx_dir.join("dendritic_snn_reservoir.ptx"),
+        &target_ptx_dir.join("dendritic_snn_reservoir.ptx"),
+    );
+
     // Compile Gamma Envelope Reduction kernel (VASIL exact metric - PATH B)
     compile_kernel(
         &nvcc,

@@ -17,6 +17,7 @@ use crate::{PrismIoError, Result};
 /// These hashes are cryptographically verified and represent real data sources
 /// BLAKE3 provides 10x-20x faster hashing with parallel processing and SIMD acceleration
 const AUTHENTIC_DATASETS: &[(&str, &str)] = &[
+    ("6VXX", "1644d0263c9b799a715d323c4a25a4466bf69ba20b058787d27900461a9964e3"),
     // First Light Test Dataset - 2VWD Nipah G Glycoprotein (REAL RCSB DATA)
     ("pdb_2vwd_first_light", "d0420029630bbaaa22e529e837a22757feabf30f3b6103dc87da15d5951aa0e0"),
 

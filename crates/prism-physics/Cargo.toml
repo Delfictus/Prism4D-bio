@@ -35,16 +35,25 @@ rand_distr = { workspace = true }
 # Parallelism
 rayon = { workspace = true }
 
+# Cryptographic integrity
+blake3 = "1.5"
+
 # Logging
 log = { workspace = true }
 env_logger = "0.11"
 
 # GPU
-cudarc = { workspace = true, optional = true, features = ["std", "cuda-12050", "driver"] }
+cudarc = { workspace = true, optional = true, features = ["std", "cuda-12050", "driver", "nvrtc"] }
+uuid = { workspace = true, features = ["v4"] }
 
 [[bin]]
 name = "prism-niv-bench"
 path = "src/bin/prism-niv-bench.rs"
+required-features = ["cuda"]
+
+[[bin]]
+name = "test-holographic"
+path = "src/bin/test_holographic.rs"
 required-features = ["cuda"]
 
 [features]
