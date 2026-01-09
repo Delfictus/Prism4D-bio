@@ -57,9 +57,37 @@ pub struct ProteinTarget {
     pub is_multimer: bool,
     #[serde(default)]
     pub has_glycans: bool,
+
+    // ========== v3.1.1 META-LEARNING ENHANCEMENTS ==========
+
+    /// Residues with attached glycans (for glycan shield tracking)
+    /// When these move away from target_residues, it indicates shield opening
+    #[serde(default)]
+    pub glycan_residues: Vec<usize>,
+
+    /// Site value multiplier (0.1 = low priority, 1.0 = standard, 5.0 = high-value epitope)
+    /// Used to weight rewards for known important sites
+    #[serde(default = "default_site_value")]
+    pub site_value: f32,
+
+    /// Adjacent residues to primary target (secondary priority)
+    /// Exposure of these indicates partial opening / approach to full exposure
+    #[serde(default)]
+    pub adjacent_residues: Vec<usize>,
+
+    /// Cryptic site mechanism type for mechanism-aware learning
+    /// Options: "glycan_shield", "allosteric", "induced_fit", "flap", "loop", "unknown"
+    #[serde(default = "default_mechanism")]
+    pub mechanism: String,
+
+    /// Known binding partners or antibodies (for context)
+    #[serde(default)]
+    pub known_binders: Vec<String>,
 }
 
 fn default_expected_sasa() -> f32 { 100.0 }
+fn default_site_value() -> f32 { 1.0 }
+fn default_mechanism() -> String { "unknown".to_string() }
 
 // ============================================================================
 // TRAINING PARAMETERS (DQN + Reward Weights)
@@ -144,6 +172,28 @@ pub struct RewardWeighting {
     /// Distance threshold for clash detection (Angstroms)
     #[serde(default = "default_clash_distance")]
     pub clash_distance: f32,
+
+    // ========== v3.1.1 META-LEARNING REWARD ENHANCEMENTS ==========
+
+    /// Bonus multiplier for glycan-correlated discovery
+    /// Rewards exposure that correlates with glycan shield displacement
+    /// This teaches the agent that "moving glycan = biologically meaningful opening"
+    #[serde(default = "default_glycan_discovery_bonus")]
+    pub glycan_discovery_bonus: f32,
+
+    /// Minimum glycan displacement (Angstroms) to qualify for discovery bonus
+    #[serde(default = "default_glycan_displacement_threshold")]
+    pub glycan_displacement_threshold: f32,
+
+    /// Weight multiplier applied from target's site_value field
+    /// Final reward *= site_value, so high-value sites get more reward
+    #[serde(default = "default_site_value_weight")]
+    pub site_value_weight: f32,
+
+    /// Bonus for exposing adjacent residues (partial discovery)
+    /// Smaller than main exposure but indicates progress
+    #[serde(default = "default_adjacent_bonus")]
+    pub adjacent_bonus: f32,
 }
 
 fn default_exposure_weight() -> f32 { 10.0 }
@@ -152,6 +202,10 @@ fn default_stability_threshold() -> f32 { 2.5 }
 fn default_target_bonus() -> f32 { 50.0 }
 fn default_clash_penalty() -> f32 { 1.0 }
 fn default_clash_distance() -> f32 { 1.5 }
+fn default_glycan_discovery_bonus() -> f32 { 25.0 }
+fn default_glycan_displacement_threshold() -> f32 { 3.0 }
+fn default_site_value_weight() -> f32 { 1.0 }
+fn default_adjacent_bonus() -> f32 { 2.0 }
 
 impl Default for RewardWeighting {
     fn default() -> Self {
@@ -162,6 +216,11 @@ impl Default for RewardWeighting {
             target_bonus: default_target_bonus(),
             clash_penalty: default_clash_penalty(),
             clash_distance: default_clash_distance(),
+            // v3.1.1 meta-learning defaults
+            glycan_discovery_bonus: default_glycan_discovery_bonus(),
+            glycan_displacement_threshold: default_glycan_displacement_threshold(),
+            site_value_weight: default_site_value_weight(),
+            adjacent_bonus: default_adjacent_bonus(),
         }
     }
 }
@@ -346,11 +405,39 @@ pub struct FeatureConfig {
     /// Include temporal features (change from initial)
     #[serde(default = "default_true")]
     pub include_temporal: bool,
+
+    /// Include difficulty encoding (4 one-hot dims: easy, medium, hard, expert)
+    /// NEW in v3.1.1 - Enables difficulty-aware learning strategies
+    /// Default: false for backward compatibility with existing models
+    #[serde(default = "default_false")]
+    pub include_difficulty: bool,
+
+    /// Include glycan-aware features (4 dims: proximity, displacement, coverage, correlation)
+    /// NEW in v3.1.1 - For glycan shield dynamics awareness
+    /// Teaches agent that glycan displacement reveals cryptic sites
+    #[serde(default = "default_false")]
+    pub include_glycan_awareness: bool,
+
+    /// Include mechanism encoding (6 one-hot: glycan_shield, allosteric, induced_fit, flap, loop, unknown)
+    /// NEW in v3.1.1 - For mechanism-specific learning strategies
+    #[serde(default = "default_false")]
+    pub include_mechanism: bool,
+
+    // ========== v3.1.1 BIO-CHEMISTRY FEATURES ==========
+
+    /// Include bio-chemistry features (3 dims: hydrophobic exposure, anisotropy, frustration)
+    /// NEW in v3.1.1 - Adds chemical intelligence to geometry
+    /// - Hydrophobic ΔΔ SASA: Exposure of "greasy" residues (drug targets love these)
+    /// - Local Anisotropy: Hinge detection (where the door opens)
+    /// - Electrostatic Frustration: Spring-loaded regions wanting to pop open
+    #[serde(default = "default_false")]
+    pub include_bio_chemistry: bool,
 }
 
 fn default_neighbor_cutoff() -> f32 { 8.0 }
 fn default_contact_cutoff() -> f32 { 6.0 }
 fn default_true() -> bool { true }
+fn default_false() -> bool { false }
 
 impl Default for FeatureConfig {
     fn default() -> Self {
@@ -362,19 +449,33 @@ impl Default for FeatureConfig {
             include_stability: true,
             include_family_flags: true,
             include_temporal: true,
+            include_difficulty: false,       // Backward compatible
+            include_glycan_awareness: false, // Backward compatible
+            include_mechanism: false,        // Backward compatible
+            include_bio_chemistry: false,    // Backward compatible
         }
     }
 }
 
 impl FeatureConfig {
     /// Calculate total feature dimension based on enabled features
+    ///
+    /// Base dimensions: 23 (standard)
+    /// With difficulty: +4 = 27
+    /// With glycan awareness: +4 = 31
+    /// With mechanism: +6 = 37
+    /// With bio-chemistry: +3 = 40 (full atomic-aware)
     pub fn feature_dim(&self) -> usize {
         let mut dim = 0;
-        if self.include_global { dim += 3; }           // Size, Rg, Density
+        if self.include_global { dim += 3; }              // Size, Rg, Density
         if self.include_target_neighborhood { dim += 8; } // Target-aware features
-        if self.include_stability { dim += 4; }        // RMSD, clashes, displacement
-        if self.include_family_flags { dim += 4; }     // Family conditioning
-        if self.include_temporal { dim += 4; }         // Change features
+        if self.include_stability { dim += 4; }           // RMSD, clashes, displacement
+        if self.include_family_flags { dim += 4; }        // Family conditioning
+        if self.include_temporal { dim += 4; }            // Change features
+        if self.include_difficulty { dim += 4; }          // Difficulty one-hot
+        if self.include_glycan_awareness { dim += 4; }    // Glycan shield dynamics
+        if self.include_mechanism { dim += 6; }           // Mechanism one-hot
+        if self.include_bio_chemistry { dim += 3; }       // Hydrophobic, anisotropy, frustration
         dim
     }
 }
@@ -463,6 +564,25 @@ mod tests {
     fn test_feature_dim() {
         let config = FeatureConfig::default();
         assert_eq!(config.feature_dim(), 23); // 3+8+4+4+4
+    }
+
+    #[test]
+    fn test_feature_dim_full_bio_chemistry() {
+        // Test with all features enabled including bio-chemistry
+        let config = FeatureConfig {
+            include_global: true,
+            include_target_neighborhood: true,
+            include_stability: true,
+            include_family_flags: true,
+            include_temporal: true,
+            include_difficulty: true,
+            include_glycan_awareness: true,
+            include_mechanism: true,
+            include_bio_chemistry: true,
+            ..Default::default()
+        };
+        // 3 + 8 + 4 + 4 + 4 + 4 + 4 + 6 + 3 = 40
+        assert_eq!(config.feature_dim(), 40);
     }
 
     #[test]

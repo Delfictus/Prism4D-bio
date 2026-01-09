@@ -54,6 +54,7 @@ pub mod buffers;
 pub mod rewards;
 pub mod trainer;
 pub mod persistence;
+pub mod atomic_chemistry;
 
 // Dendritic Agent (default - no PyTorch dependency)
 pub mod dendritic_agent;

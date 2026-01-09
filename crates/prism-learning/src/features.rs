@@ -21,6 +21,12 @@
 
 use crate::buffers::SimulationBuffers;
 use crate::manifest::{FeatureConfig, ProteinTarget};
+use crate::atomic_chemistry::{
+    AtomicMetadata, ResidueType,
+    calculate_hydrophobic_exposure,
+    calculate_anisotropy,
+    calculate_electrostatic_frustration,
+};
 use prism_io::sovereign_types::Atom;
 use std::collections::{HashMap, HashSet};
 
@@ -72,6 +78,23 @@ pub struct FeatureExtractor {
     has_glycans: bool,
     initial_exposure: f32,
     initial_rg: f32,
+    /// Difficulty encoding for difficulty-aware learning (v3.1.1)
+    difficulty: String,
+    /// Glycan residue positions for shield tracking (v3.1.1)
+    glycan_residues: HashSet<usize>,
+    /// Adjacent residues for partial discovery tracking (v3.1.1)
+    adjacent_residues: HashSet<usize>,
+    /// Cryptic site mechanism type (v3.1.1)
+    mechanism: String,
+    /// Initial glycan positions for displacement calculation (v3.1.1)
+    initial_glycan_positions: Vec<f32>,
+    /// Atomic-level metadata for bio-chemistry features (v3.1.1)
+    /// Contains residue types, hydrophobicity, partial charges, Cα indices
+    atomic_metadata: Option<AtomicMetadata>,
+    /// Initial positions for bio-chemistry delta calculations
+    initial_positions: Vec<f32>,
+    /// Target residue indices as Vec for bio-chemistry calculations
+    target_residue_vec: Vec<usize>,
 }
 
 impl FeatureExtractor {
@@ -85,6 +108,14 @@ impl FeatureExtractor {
             has_glycans: target.has_glycans,
             initial_exposure: 0.0,
             initial_rg: 0.0,
+            difficulty: target.difficulty.clone(),
+            glycan_residues: target.glycan_residues.iter().cloned().collect(),
+            adjacent_residues: target.adjacent_residues.iter().cloned().collect(),
+            mechanism: target.mechanism.clone(),
+            initial_glycan_positions: Vec::new(),
+            atomic_metadata: None,
+            initial_positions: Vec::new(),
+            target_residue_vec: target.target_residues.clone(),
         }
     }
 
@@ -102,6 +133,24 @@ impl FeatureExtractor {
                 .collect();
 
             self.initial_exposure = calculate_exposure_fast(&positions, &target_indices, self.config.neighbor_cutoff);
+
+            // Store initial glycan positions for displacement tracking (v3.1.1)
+            if !self.glycan_residues.is_empty() {
+                self.initial_glycan_positions.clear();
+                for (i, atom) in initial_atoms.iter().enumerate() {
+                    if self.glycan_residues.contains(&(atom.residue_id as usize)) {
+                        self.initial_glycan_positions.push(positions[i * 3]);
+                        self.initial_glycan_positions.push(positions[i * 3 + 1]);
+                        self.initial_glycan_positions.push(positions[i * 3 + 2]);
+                    }
+                }
+            }
+
+            // Build atomic metadata for bio-chemistry features (v3.1.1)
+            if self.config.include_bio_chemistry {
+                self.atomic_metadata = Some(AtomicMetadata::from_atoms(initial_atoms));
+                self.initial_positions = positions.clone();
+            }
         }
     }
 
@@ -157,6 +206,45 @@ impl FeatureExtractor {
         if self.config.include_temporal {
             let temporal = self.extract_temporal(&positions, &target_indices);
             for v in temporal {
+                features.values[idx] = v;
+                idx += 1;
+            }
+        }
+
+        // 6. Difficulty Features (4) - NEW in v3.1.1
+        if self.config.include_difficulty {
+            let difficulty_flags = self.extract_difficulty();
+            for v in difficulty_flags {
+                features.values[idx] = v;
+                idx += 1;
+            }
+        }
+
+        // 7. Glycan Awareness Features (4) - NEW in v3.1.1
+        // Teaches agent that glycan displacement reveals cryptic sites
+        if self.config.include_glycan_awareness {
+            let glycan_features = self.extract_glycan_features(atoms, &positions, &target_indices);
+            for v in glycan_features {
+                features.values[idx] = v;
+                idx += 1;
+            }
+        }
+
+        // 8. Mechanism Features (6) - NEW in v3.1.1
+        // One-hot encoding for cryptic site mechanism type
+        if self.config.include_mechanism {
+            let mechanism_flags = self.extract_mechanism();
+            for v in mechanism_flags {
+                features.values[idx] = v;
+                idx += 1;
+            }
+        }
+
+        // 9. Bio-Chemistry Features (3) - NEW in v3.1.1
+        // Atomic-level chemistry: hydrophobic exposure, hinge detection, electrostatic frustration
+        if self.config.include_bio_chemistry {
+            let bio_features = self.extract_bio_chemistry(&positions);
+            for v in bio_features {
                 features.values[idx] = v;
                 idx += 1;
             }
@@ -372,6 +460,253 @@ impl FeatureExtractor {
             (exposure_delta + 0.5).max(0.0).min(1.0),  // 1: Exposure change (centered)
             (current_rg / 50.0).min(1.0),              // 2: Current Rg (normalized)
             ((rg_delta / 10.0) + 0.5).max(0.0).min(1.0), // 3: Rg change (centered)
+        ]
+    }
+
+    // ========================================================================
+    // DIFFICULTY FEATURES (4 dims) - NEW in v3.1.1
+    // ========================================================================
+
+    /// Extract difficulty one-hot encoding
+    /// Enables agent to learn different strategies for different difficulty levels:
+    /// - Easy: More aggressive exploration
+    /// - Medium: Balanced approach
+    /// - Hard: More cautious, longer simulations
+    /// - Expert: Ultra-careful, prioritize stability
+    fn extract_difficulty(&self) -> [f32; 4] {
+        match self.difficulty.to_lowercase().as_str() {
+            "easy" => [1.0, 0.0, 0.0, 0.0],
+            "medium" => [0.0, 1.0, 0.0, 0.0],
+            "hard" => [0.0, 0.0, 1.0, 0.0],
+            "expert" => [0.0, 0.0, 0.0, 1.0],
+            _ => [0.0, 1.0, 0.0, 0.0], // Default to medium
+        }
+    }
+
+    // ========================================================================
+    // GLYCAN AWARENESS FEATURES (4 dims) - NEW in v3.1.1
+    // ========================================================================
+
+    /// Extract glycan shield awareness features
+    ///
+    /// Key insight from 6VXX discovery: glycan shield displacement correlates
+    /// with cryptic site exposure. When glycans move away from target residues,
+    /// it indicates biologically meaningful opening (not just destabilization).
+    ///
+    /// Features:
+    /// 0. Glycan-target proximity: How close are glycans to target residues?
+    /// 1. Glycan displacement: How much have glycans moved from initial positions?
+    /// 2. Glycan coverage: What fraction of target residues have nearby glycans?
+    /// 3. Displacement-exposure correlation: Does glycan movement correlate with exposure?
+    fn extract_glycan_features(
+        &self,
+        atoms: &[Atom],
+        positions: &[f32],
+        target_indices: &[usize],
+    ) -> [f32; 4] {
+        // If no glycan residues defined, return zeros
+        if self.glycan_residues.is_empty() {
+            return [0.0; 4];
+        }
+
+        // Identify glycan atom indices
+        let glycan_indices: Vec<usize> = atoms.iter()
+            .enumerate()
+            .filter(|(_, a)| self.glycan_residues.contains(&(a.residue_id as usize)))
+            .map(|(i, _)| i)
+            .collect();
+
+        if glycan_indices.is_empty() {
+            return [0.0; 4];
+        }
+
+        // 1. Glycan-target proximity: average min distance from glycan to target
+        let mut total_min_dist = 0.0;
+        for &gi in &glycan_indices {
+            let gx = positions[gi * 3];
+            let gy = positions[gi * 3 + 1];
+            let gz = positions[gi * 3 + 2];
+
+            let mut min_dist_sq = f32::MAX;
+            for &ti in target_indices {
+                let tx = positions[ti * 3];
+                let ty = positions[ti * 3 + 1];
+                let tz = positions[ti * 3 + 2];
+                let dist_sq = (gx - tx).powi(2) + (gy - ty).powi(2) + (gz - tz).powi(2);
+                min_dist_sq = min_dist_sq.min(dist_sq);
+            }
+            total_min_dist += min_dist_sq.sqrt();
+        }
+        let avg_proximity = total_min_dist / glycan_indices.len() as f32;
+        // Invert and normalize: closer = higher value
+        let proximity_feature = 1.0 / (1.0 + avg_proximity / 10.0);
+
+        // 2. Glycan displacement from initial positions
+        let mut total_displacement = 0.0;
+        if !self.initial_glycan_positions.is_empty() {
+            let mut glycan_atom_idx = 0;
+            for (i, atom) in atoms.iter().enumerate() {
+                if self.glycan_residues.contains(&(atom.residue_id as usize)) {
+                    let init_idx = glycan_atom_idx * 3;
+                    if init_idx + 2 < self.initial_glycan_positions.len() {
+                        let dx = positions[i * 3] - self.initial_glycan_positions[init_idx];
+                        let dy = positions[i * 3 + 1] - self.initial_glycan_positions[init_idx + 1];
+                        let dz = positions[i * 3 + 2] - self.initial_glycan_positions[init_idx + 2];
+                        total_displacement += (dx * dx + dy * dy + dz * dz).sqrt();
+                    }
+                    glycan_atom_idx += 1;
+                }
+            }
+        }
+        let avg_displacement = if glycan_indices.is_empty() {
+            0.0
+        } else {
+            total_displacement / glycan_indices.len() as f32
+        };
+        // Normalize: 0-10Å range
+        let displacement_feature = (avg_displacement / 10.0).min(1.0);
+
+        // 3. Glycan coverage: fraction of target residues with glycan within cutoff
+        let cutoff_sq = self.config.neighbor_cutoff.powi(2);
+        let mut covered_targets = 0;
+        for &ti in target_indices {
+            let tx = positions[ti * 3];
+            let ty = positions[ti * 3 + 1];
+            let tz = positions[ti * 3 + 2];
+
+            for &gi in &glycan_indices {
+                let gx = positions[gi * 3];
+                let gy = positions[gi * 3 + 1];
+                let gz = positions[gi * 3 + 2];
+                let dist_sq = (gx - tx).powi(2) + (gy - ty).powi(2) + (gz - tz).powi(2);
+                if dist_sq < cutoff_sq {
+                    covered_targets += 1;
+                    break; // Only count once per target
+                }
+            }
+        }
+        let coverage_feature = if target_indices.is_empty() {
+            0.0
+        } else {
+            covered_targets as f32 / target_indices.len() as f32
+        };
+
+        // 4. Displacement-exposure correlation
+        // Higher value when glycan displacement correlates with target exposure
+        let current_exposure = calculate_exposure_fast(
+            positions, target_indices, self.config.neighbor_cutoff
+        );
+        let exposure_gain = current_exposure - self.initial_exposure;
+
+        // Correlation proxy: if both displacement and exposure increase together
+        let correlation_feature = if avg_displacement > 0.0 && exposure_gain > 0.0 {
+            // Both positive = good correlation
+            ((displacement_feature * 0.5 + exposure_gain) / 1.5).min(1.0)
+        } else if avg_displacement > 0.0 && exposure_gain <= 0.0 {
+            // Displacement without exposure = glycan moved but site not opening
+            0.2
+        } else {
+            0.0
+        };
+
+        [
+            proximity_feature,      // 0: Glycan-target proximity [0,1]
+            displacement_feature,   // 1: Glycan displacement [0,1]
+            1.0 - coverage_feature, // 2: Exposure potential (inverted coverage) [0,1]
+            correlation_feature,    // 3: Displacement-exposure correlation [0,1]
+        ]
+    }
+
+    // ========================================================================
+    // MECHANISM FEATURES (6 dims) - NEW in v3.1.1
+    // ========================================================================
+
+    /// Extract mechanism one-hot encoding
+    /// Enables agent to learn different strategies for different cryptic site mechanisms:
+    /// - glycan_shield: Look for glycan displacement patterns (spike proteins)
+    /// - allosteric: Distant site coupling, look for hinge motions
+    /// - induced_fit: Ligand-induced conformational changes
+    /// - flap: Protease flap dynamics (HIV protease)
+    /// - loop: Omega-loop movements (beta-lactamases)
+    /// - unknown: General strategy
+    fn extract_mechanism(&self) -> [f32; 6] {
+        match self.mechanism.to_lowercase().as_str() {
+            "glycan_shield" => [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "allosteric" => [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+            "induced_fit" => [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+            "flap" | "flap_cryptic" => [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            "loop" | "omega_loop" => [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            _ => [0.0, 0.0, 0.0, 0.0, 0.0, 1.0], // Unknown
+        }
+    }
+
+    // ========================================================================
+    // BIO-CHEMISTRY FEATURES (3 dims) - NEW in v3.1.1
+    // ========================================================================
+
+    /// Extract atomic-level bio-chemistry features
+    ///
+    /// These features give the SNN "chemical intelligence" beyond geometry:
+    ///
+    /// 1. **Hydrophobic Exposure Delta** (The "Grease Signal")
+    ///    - Drug binding sites are usually hydrophobic
+    ///    - High value = exposed "greasy" residues = prime drug target
+    ///    - Weighted by Kyte-Doolittle hydrophobicity scale
+    ///
+    /// 2. **Local Displacement Anisotropy** (The "Hinge Signal")
+    ///    - Detects where backbone moves relative to neighbors
+    ///    - High value = mechanical hinge = cryptic pocket entrance
+    ///    - Computed from Cα atom trajectories
+    ///
+    /// 3. **Electrostatic Frustration** (The "Spring Signal")
+    ///    - Like-charges forced close together want to separate
+    ///    - High value = thermodynamic stress = wants to open
+    ///    - Computed from partial atomic charges
+    fn extract_bio_chemistry(&self, positions: &[f32]) -> [f32; 3] {
+        // Check if atomic metadata is available
+        let metadata = match &self.atomic_metadata {
+            Some(m) => m,
+            None => return [0.0, 0.0, 0.0],  // No metadata, return zeros
+        };
+
+        // Check if initial positions are available
+        if self.initial_positions.is_empty() {
+            return [0.0, 0.0, 0.0];
+        }
+
+        // 1. Hydrophobic Exposure Delta
+        let hydrophobic_delta = calculate_hydrophobic_exposure(
+            positions,
+            &self.initial_positions,
+            metadata,
+            &self.target_residue_vec,
+            self.config.neighbor_cutoff,
+        );
+        // Normalize to [0, 1] - typical range is [-1, 1] for delta
+        let hydrophobic_feature = ((hydrophobic_delta / 10.0) + 0.5).max(0.0).min(1.0);
+
+        // 2. Local Displacement Anisotropy (Hinge Detection)
+        let (max_anisotropy, _mean_anisotropy) = calculate_anisotropy(
+            positions,
+            &self.initial_positions,
+            metadata,
+        );
+        // Normalize: typical hinge motion is 2-5Å differential
+        let anisotropy_feature = (max_anisotropy / 5.0).min(1.0);
+
+        // 3. Electrostatic Frustration
+        let frustration = calculate_electrostatic_frustration(
+            positions,
+            metadata,
+            self.config.neighbor_cutoff,
+        );
+        // Normalize: frustration is usually 0-10 energy units
+        let frustration_feature = (frustration / 10.0).min(1.0);
+
+        [
+            hydrophobic_feature,   // 0: "Grease" - exposed hydrophobic surface
+            anisotropy_feature,    // 1: "Hinge" - local displacement differential
+            frustration_feature,   // 2: "Spring" - electrostatic stress
         ]
     }
 }

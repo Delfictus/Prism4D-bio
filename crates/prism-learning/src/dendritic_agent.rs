@@ -388,14 +388,24 @@ impl DendriticAgent {
     }
 
     /// Create new Dendritic Agent with custom configuration
+    ///
+    /// # Feature Dimensions (v3.1.1 Meta-Learning + Bio-Chemistry)
+    /// - Standard: 23 features (Global + Target + Stability + Family + Temporal)
+    /// - With difficulty: 27 features (+4 difficulty one-hot)
+    /// - With glycan awareness: 31 features (+4 glycan features)
+    /// - Full meta-learning: 37 features (+6 mechanism one-hot)
+    /// - Full atomic-aware: 40 features (+3 bio-chemistry: grease, hinge, frustration)
     pub fn new_with_config(
         input_dim: i64,
         device_idx: usize,
         config: DendriticAgentConfig,
     ) -> Result<Self> {
+        // Accept valid feature dimensions for different configurations
+        // 23: standard, 27: +difficulty, 31: +glycan, 37: meta-learning, 40: +bio-chemistry
         anyhow::ensure!(
-            input_dim == 23,
-            "DendriticAgent requires 23 input features, got {}",
+            input_dim == 23 || input_dim == 27 || input_dim == 31 || input_dim == 37 || input_dim == 40,
+            "DendriticAgent requires 23, 27, 31, 37, or 40 input features, got {}. \
+             23=standard, 27=+difficulty, 31=+glycan, 37=meta-learning, 40=+bio-chemistry",
             input_dim
         );
 
